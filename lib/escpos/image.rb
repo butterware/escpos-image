@@ -4,6 +4,7 @@ module Escpos
     VERSION = "0.0.1"
 
     def initialize(image_path, opts = {})
+      @printer = opts.fetch(:printer, Printer.new)
       if opts.fetch(:convert_to_monochrome, false)
         require_mini_magick!
         image = convert_to_monochrome(image_path, opts)
@@ -18,12 +19,15 @@ module Escpos
     end
 
     def to_escpos
-      bits = []
-      mask = 0x80
-      i = 0
-      temp = 0
+      
+      stream = ""
 
       0.upto(@image.height - 1) do |y|
+        bits = []
+        mask = 0x80
+        i = 0
+        temp = 0
+
         0.upto(@image.width - 1) do |x|
           r, g, b, a =
             ChunkyPNG::Color.r(@image[x, y]),
@@ -33,24 +37,50 @@ module Escpos
           px = (r + g + b) / 3
           raise ArgumentError.new("PNG images with alpha are not supported.") unless a == 255
           value = px > 128 ? 255 : 0
+          # puts "#{x}/#{y} = #{value}"
           value = (value << 8) | value
           temp |= mask if value == 0
           mask = mask >> 1
           i = i + 1
           if i == 8
+            # puts "y=#{y}, x=#{x}, temp=#{temp}"
             bits << temp
             mask = 0x80
             i = 0
             temp = 0
           end
         end
-      end
 
-      [
-        Escpos.sequence(IMAGE),
-        [@image.width / 8, @image.height ].pack("SS"),
-        bits.pack("C*")
-      ].join
+        n1 = (bits.length*8) % 256
+        n2 = (bits.length*8) / 256
+        puts "bits.length = #{bits.length}, n1 = #{n1}, n2 = #{n2}"
+        stream += [
+          @printer.sequence(:IMAGE),
+          [n1, n2].pack("CC"),
+          bits.pack("C*"),
+          @printer.sequence(:CTL_CR),
+          @printer.sequence(:CTL_LF)
+        ].join
+      end
+      
+      
+      # [
+      #   @printer.sequence(:IMAGE),
+      #   [@image.width / 8, @image.height ].pack("CC"),
+      #   bits.pack("C*")
+      # ].join
+
+      # n1 = @image.width % 256
+      # n2 = @image.width / 256
+      # puts "bits.length = #{bits.length}, n1 = #{n1}, n2 = #{n2}"
+      # [
+      #   @printer.sequence(:IMAGE),
+      #   [n1, n2].pack("CC"),
+      #   bits.pack("C*"),
+      #   @printer.sequence(:CTL_LF)
+      # ].join
+
+      stream
     end
 
     private
